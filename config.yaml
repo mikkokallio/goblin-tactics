@@ -1,0 +1,36 @@
+simulation:
+  num_battles: 1000
+  max_turns_per_battle: 200
+  dungeon_size: [50, 50]
+  
+knights:
+  count: 4
+  hp: [20, 30]
+  damage: [5, 8]
+  vision_range: 3
+  
+goblins:
+  count: [12, 20]
+  hp: [3, 6]
+  damage: [1, 2]
+  vision_range: 3
+  
+terrain:
+  difficult_terrain_chance: 0.08  # 8% of floor tiles
+  
+learning:
+  algorithm: "DQN"
+  learning_rate: 0.001
+  gamma: 0.99
+  epsilon_start: 1.0
+  epsilon_end: 0.01
+  epsilon_decay: 0.995
+  batch_size: 64
+  memory_size: 10000
+  target_update: 10
+  
+display:
+  show_battles: true
+  update_frequency: 10  # Show every Nth battle
+  colors_enabled: true
+  show_vision: false  # Show LoS overlay
