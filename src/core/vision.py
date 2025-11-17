@@ -136,15 +136,55 @@ def update_all_vision(entities: List[Entity], world: World):
     3. Share vision transitively through allied networks
     4. Update memory for each entity
     """
+def update_all_vision(entities: List[Entity], world: World):
+    """
+    Update vision for all entities with full team-wide vision sharing
+    
+    Process:
+    1. Calculate individual LoS for each entity
+    2. Identify visible allies and enemies  
+    3. Share ALL vision across entire team (not just visible allies)
+    4. Update memory for each entity
+    """
     # Step 1 & 2: Calculate individual vision
     for entity in entities:
         if entity.alive:
             update_entity_vision(entity, world, entities)
     
-    # Step 3: Share vision through allied networks
+    # Step 3: Full team vision sharing - everyone on a team sees everything
+    # Separate entities by team
+    teams = {}
     for entity in entities:
         if entity.alive:
-            update_shared_vision(entity)
+            if entity.team not in teams:
+                teams[entity.team] = []
+            teams[entity.team].append(entity)
+    
+    # Share vision within each team
+    for team, team_entities in teams.items():
+        # Collect all tiles visible to ANY team member
+        team_visible_tiles = set()
+        for entity in team_entities:
+            team_visible_tiles.update(entity.visible_tiles)
+        
+        # Give all team members the complete team vision
+        for entity in team_entities:
+            entity.visible_tiles = team_visible_tiles.copy()
+        
+        # Update visible allies/enemies based on shared vision
+        for entity in team_entities:
+            entity.visible_allies = []
+            entity.visible_enemies = []
+            
+            for other in entities:
+                if not other.alive or other == entity:
+                    continue
+                
+                if other.position in entity.visible_tiles:
+                    if other.team == entity.team:
+                        entity.visible_allies.append(other)
+                    else:
+                        entity.visible_enemies.append(other)
     
     # Step 4: Update memory
     for entity in entities:

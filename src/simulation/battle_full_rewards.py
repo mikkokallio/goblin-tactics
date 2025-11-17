@@ -84,10 +84,6 @@ class Battle:
             self.world.place_entity(knight)
         for goblin in self.goblins:
             self.world.place_entity(goblin)
-            # Track directive history for diversity rewards
-            goblin.directive_history = []
-            # Track if goblin has dealt damage this battle
-            goblin.has_dealt_damage = False
         
         # Initialize safe zone / storm
         self.world.initialize_safe_zone()
@@ -253,19 +249,23 @@ class Battle:
                 reward = 0.0
                 
                 if not entity.alive:
-                    # Death penalty - much lighter if dealt damage before dying
-                    if hasattr(entity, 'has_dealt_damage') and entity.has_dealt_damage:
-                        reward = -10.0  # Light penalty - fought and died heroically
-                    else:
-                        reward = -100.0  # Heavy penalty - died without contributing
+                    # Death penalty
+                    reward = -100.0
                 else:
                     # Check if in grail mode
                     grail_mode = self.world.grail_position is not None
                     
                     if grail_mode:
-                        # === MINIMAL BASELINE REWARD SYSTEM ===
-                        # ONLY damage rewards - no movement, exploration, or positioning
-                        # This establishes baseline win rate with pure numbers
+                        # SIMPLIFIED REWARD SYSTEM
+                        # 1. Reward attacking based on damage
+                        # 2. Reward approaching enemy if allies nearby, staying at range if alone
+                        
+                        # Detect if ANY goblin can see knights (shared intel through visible_enemies)
+                        enemies_visible = len(entity.visible_enemies) > 0
+                        
+                        # Check if ANY allied goblin sees enemies (simulates communication)
+                        allies_see_enemies = any(len(ally.visible_enemies) > 0 for ally in entity.visible_allies)
+                        combat_mode = enemies_visible or allies_see_enemies
                         
                         # === ATTACK REWARDS: Based purely on damage dealt ===
                         if action.get('action') == 'attack':
@@ -276,111 +276,77 @@ class Battle:
                                         damage = event.get('damage', 0)
                                         reward += damage * 10.0  # Reward based on damage dealt
                                         
-                                        # Mark that this goblin has dealt damage
-                                        if damage > 0:
-                                            entity.has_dealt_damage = True
-                                        
                                         if event.get('defender_killed'):
                                             reward += 100.0  # Bonus for killing enemy
                                     break
                         
-                        # === ENGAGEMENT REWARD: Pursue and engage enemies aggressively ===
-                        if entity.visible_enemies:
-                            if action.get('action') == 'move':
-                                new_pos = action.get('position')
-                                if new_pos:
-                                    # Reward moving closer to enemies
-                                    closest_enemy = min(entity.visible_enemies, key=lambda e: entity.distance_to(e))
-                                    current_dist = entity.distance_to(closest_enemy)
-                                    new_dist = abs(new_pos[0] - closest_enemy.x) + abs(new_pos[1] - closest_enemy.y)
+                        # === EXPLORATION REWARD: Always reward exploring new tiles ===
+                        if action.get('action') == 'move':
+                            new_pos = action.get('position')
+                            if new_pos and not entity.has_explored(*new_pos):
+                                reward += 8.0  # Explore new areas!
+                        
+                        # === ANTI-CLUSTERING: Penalty if too many goblins nearby with no enemies ===
+                        if not entity.visible_enemies:
+                            # Count goblins within 5 tiles
+                            nearby_goblins = sum(1 for ally in entity.visible_allies 
+                                               if entity.distance_to(ally) <= 5)
+                            
+                            if nearby_goblins >= 5:
+                                reward -= 15.0  # Too crowded! Spread out! (increased from -10)
+                            elif nearby_goblins >= 3:
+                                reward -= 8.0  # Getting crowded (increased from -5)
+                        
+                        # === MOVEMENT REWARDS: Multiple strategies for different situations ===
+                        if action.get('action') == 'move':
+                            new_pos = action.get('position')
+                            
+                            if entity.visible_enemies and new_pos:
+                                # Simple - always reward moving toward visible enemy
+                                closest_enemy = min(entity.visible_enemies, key=lambda e: entity.distance_to(e))
+                                current_dist = entity.distance_to(closest_enemy)
+                                new_dist = abs(new_pos[0] - closest_enemy.x) + abs(new_pos[1] - closest_enemy.y)
+                                
+                                if new_dist < current_dist:
+                                    reward += 12.0  # Always reward closing distance to enemy!
+                                
+                                # Pack formation - reward having allies nearby when in combat
+                                nearby_allies = sum(1 for ally in entity.visible_allies if entity.distance_to(ally) <= 4)
+                                if nearby_allies >= 1:
+                                    reward += 5.0  # Good, you have backup nearby!
+                                
+                            else:
+                                # No enemies visible to me
+                                # Shared vision - move toward allies who can see enemies
+                                allies_with_vision = [ally for ally in entity.visible_allies if len(ally.visible_enemies) > 0]
+                                if allies_with_vision and new_pos:
+                                    # Find closest ally who sees enemies
+                                    closest_ally_with_vision = min(allies_with_vision, key=lambda a: entity.distance_to(a))
+                                    current_ally_dist = entity.distance_to(closest_ally_with_vision)
+                                    new_ally_dist = abs(new_pos[0] - closest_ally_with_vision.x) + abs(new_pos[1] - closest_ally_with_vision.y)
                                     
-                                    if new_dist < current_dist:
-                                        reward += 15.0  # Strong reward for pursuing enemies!
+                                    if new_ally_dist < current_ally_dist:
+                                        reward += 10.0  # Reinforce allies in combat!
                         
-                        # === DIRECTIVE DIVERSITY REWARD: Encourage using varied tactics ===
-                        if hasattr(entity, 'directive_history') and hasattr(entity, 'last_directive'):
-                            directive = entity.last_directive
-                            history = entity.directive_history[-10:]  # Look at last 10 directives
-                            
-                            if directive not in history:
-                                # Using a NEW directive not used in last 10 actions!
-                                reward += 20.0  # Strong reward for tactical diversity!
-                            elif len(set(history)) >= 3:
-                                # Using at least 3 different directives in last 10 actions
-                                reward += 5.0  # Small bonus for maintaining variety
-                            
-                            # Update history
-                            entity.directive_history.append(directive)
-                            if len(entity.directive_history) > 20:
-                                entity.directive_history.pop(0)  # Keep only last 20
+                        # === SPREAD OUT BEHAVIOR: Reward moving away from crowded areas ===
+                        elif action.get('action') == 'move' and not entity.visible_enemies:
+                            new_pos = action.get('position')
+                            if new_pos:
+                                # Count how crowded current area is
+                                current_crowding = sum(1 for ally in entity.visible_allies 
+                                                      if entity.distance_to(ally) <= 5)
+                                
+                                # Estimate how crowded new position will be
+                                new_crowding = sum(1 for ally in entity.visible_allies
+                                                  if abs(new_pos[0] - ally.x) + abs(new_pos[1] - ally.y) <= 5)
+                                
+                                # Reward moving to less crowded areas
+                                if new_crowding < current_crowding:
+                                    reward += 6.0  # Move to less crowded area!
                         
-                        # # === FULL REWARD SYSTEM (COMMENTED OUT FOR BASELINE) ===
-                        # # Exploration, anti-clustering, movement strategies, etc.
-                        # # Uncomment to restore full tactical rewards
-                        
-                        # # === EXPLORATION REWARD: Always reward exploring new tiles ===
-                        # if action.get('action') == 'move':
-                        #     new_pos = action.get('position')
-                        #     if new_pos and not entity.has_explored(*new_pos):
-                        #         reward += 8.0  # Explore new areas!
-                        # 
-                        # # === ANTI-CLUSTERING: Penalty if too many goblins nearby with no enemies ===
-                        # if not entity.visible_enemies:
-                        #     # Count goblins within 5 tiles
-                        #     nearby_goblins = sum(1 for ally in entity.visible_allies 
-                        #                        if entity.distance_to(ally) <= 5)
-                        #     
-                        #     if nearby_goblins >= 5:
-                        #         reward -= 15.0  # Too crowded! Spread out!
-                        #     elif nearby_goblins >= 3:
-                        #         reward -= 8.0  # Getting crowded
-                        # 
-                        # # === MOVEMENT REWARDS: Multiple strategies for different situations ===
-                        # if action.get('action') == 'move':
-                        #     new_pos = action.get('position')
-                        #     
-                        #     if entity.visible_enemies and new_pos:
-                        #         # Simple - always reward moving toward visible enemy
-                        #         closest_enemy = min(entity.visible_enemies, key=lambda e: entity.distance_to(e))
-                        #         current_dist = entity.distance_to(closest_enemy)
-                        #         new_dist = abs(new_pos[0] - closest_enemy.x) + abs(new_pos[1] - closest_enemy.y)
-                        #         
-                        #         if new_dist < current_dist:
-                        #             reward += 12.0  # Always reward closing distance to enemy!
-                        #         
-                        #         # Pack formation - reward having allies nearby when in combat
-                        #         nearby_allies = sum(1 for ally in entity.visible_allies if entity.distance_to(ally) <= 4)
-                        #         if nearby_allies >= 1:
-                        #             reward += 5.0  # Good, you have backup nearby!
-                        #         
-                        #     else:
-                        #         # No enemies visible to me
-                        #         # Shared vision - move toward allies who can see enemies
-                        #         allies_with_vision = [ally for ally in entity.visible_allies if len(ally.visible_enemies) > 0]
-                        #         if allies_with_vision and new_pos:
-                        #             # Find closest ally who sees enemies
-                        #             closest_ally_with_vision = min(allies_with_vision, key=lambda a: entity.distance_to(a))
-                        #             current_ally_dist = entity.distance_to(closest_ally_with_vision)
-                        #             new_ally_dist = abs(new_pos[0] - closest_ally_with_vision.x) + abs(new_pos[1] - closest_ally_with_vision.y)
-                        #             
-                        #             if new_ally_dist < current_ally_dist:
-                        #                 reward += 10.0  # Reinforce allies in combat!
-                        # 
-                        # # === SPREAD OUT BEHAVIOR: Reward moving away from crowded areas ===
-                        # elif action.get('action') == 'move' and not entity.visible_enemies:
-                        #     new_pos = action.get('position')
-                        #     if new_pos:
-                        #         # Count how crowded current area is
-                        #         current_crowding = sum(1 for ally in entity.visible_allies 
-                        #                               if entity.distance_to(ally) <= 5)
-                        #         
-                        #         # Estimate how crowded new position will be
-                        #         new_crowding = sum(1 for ally in entity.visible_allies
-                        #                           if abs(new_pos[0] - ally.x) + abs(new_pos[1] - ally.y) <= 5)
-                        #         
-                        #         # Reward moving to less crowded areas
-                        #         if new_crowding < current_crowding:
-                        #             reward += 6.0  # Move to less crowded area!
+                        # # === OLD REWARD SYSTEM (COMMENTED OUT) ===
+                        # # All the complex positioning, pack, scouting, sector awareness, etc.
+                        # # Commented out to test simple reward system
                     
                     else:
                         # STANDARD MODE REWARDS - Aggressive tactics

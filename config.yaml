@@ -1,7 +1,16 @@
 simulation:
   num_battles: 1000
-  max_turns_per_battle: 200
-  dungeon_size: [50, 50]
+  max_turns_per_battle: 300  # Increased to allow battles to resolve naturally
+  dungeon_size: [40, 40]  # Smaller for better screen fit
+  record_battles: true  # Enable battle recording
+  # Grail mode - asymmetric capture-the-flag
+  grail_mode: true  # Knights must steal grail and escape
+  arena_mode: true  # If true, use simple rectangular arena for combat training
+  # Storm/shrinking zone settings (disabled in grail mode)
+  storm_enabled: false  # Disabled for grail mode - kept for future use
+  storm_start_turn: 30  # Earlier start for visibility
+  storm_damage: 2  # Lower damage, earlier pressure
+  storm_shrink_rate: 0.3  # Very slow progression
   
 knights:
   count: 4
@@ -10,8 +19,8 @@ knights:
   vision_range: 3
   
 goblins:
-  count: [12, 20]
-  hp: [3, 6]
+  count: [40, 50]  # EVEN MORE GOBLINS! Increased from [40, 48]
+  hp: [4, 7]  # Slightly increased HP so more survive to fight together
   damage: [1, 2]
   vision_range: 3
   

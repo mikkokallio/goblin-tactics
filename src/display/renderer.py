@@ -54,54 +54,122 @@ class Renderer:
         # Create entity position lookup
         entity_map = {e.position: e for e in entities if e.alive}
         
+        # Build vision fields for all entities
+        goblin_vision = set()
+        knight_vision = set()
+        
+        for entity in entities:
+            if entity.alive and hasattr(entity, 'visible_tiles'):
+                # Use the existing visible_tiles attribute
+                if entity.team == Team.GOBLIN:
+                    goblin_vision.update(entity.visible_tiles)
+                else:  # Knight
+                    knight_vision.update(entity.visible_tiles)
+        
         # Print map
         for y in range(world.height):
             line = ""
             for x in range(world.width):
+                # Check if in storm (outside safe zone)
+                in_storm = not world.is_in_safe_zone(x, y)
+                
+                # Check if this is the entrance corridor
+                is_entrance = world.is_entrance_position(x, y)
+                
+                # Determine vision background color (knight takes priority if overlapping)
+                vision_bg = None
+                if (x, y) in knight_vision:
+                    vision_bg = 'knight'
+                elif (x, y) in goblin_vision:
+                    vision_bg = 'goblin'
+                
                 # Check for entity
                 if (x, y) in entity_map:
                     entity = entity_map[(x, y)]
-                    line += self._get_entity_char(entity)
+                    line += self._get_entity_char(entity, in_storm, is_entrance, vision_bg)
+                # Check for grail (if not carried)
+                elif world.is_grail_at_position(x, y):
+                    line += self._get_grail_char(is_entrance, vision_bg)
                 else:
                     # Get terrain
-                    line += self._get_terrain_char(world, x, y)
+                    line += self._get_terrain_char(world, x, y, in_storm, is_entrance, vision_bg)
             print(line)
         print()
     
-    def _get_terrain_char(self, world: World, x: int, y: int) -> str:
+    def _get_terrain_char(self, world: World, x: int, y: int, in_storm: bool = False, 
+                          is_entrance: bool = False, vision_bg: Optional[str] = None) -> str:
         """Get colored character for terrain"""
         if not world.is_in_bounds(x, y):
             return ' '
         
         terrain = world.map[y, x]
         
-        if terrain == WALL:
-            return self._colorize('#', 'white')
-        elif terrain == FLOOR:
-            return self._colorize('.', 'dark_gray')
-        elif terrain == DIFFICULT:
-            return self._colorize('~', 'yellow')
+        # Apply backgrounds in priority order: entrance > storm > vision
+        if is_entrance:
+            bg = Back.BLUE  # Highlight entrance
+        elif in_storm:
+            bg = Back.GREEN
+        elif vision_bg == 'knight':
+            bg = Back.YELLOW  # Darker yellow for knight vision
+        elif vision_bg == 'goblin':
+            bg = Back.RED  # Darker red for goblin vision
         else:
-            return self._colorize('?', 'magenta')
+            bg = ''
+        
+        if terrain == WALL:
+            return bg + self._colorize('#', 'white')
+        elif terrain == FLOOR:
+            return bg + self._colorize('.', 'dark_gray')
+        elif terrain == DIFFICULT:
+            return bg + self._colorize('~', 'yellow')
+        else:
+            return bg + self._colorize('?', 'magenta')
     
-    def _get_entity_char(self, entity: Entity) -> str:
-        """Get colored character for entity"""
-        symbol = entity.symbol
+    def _get_grail_char(self, is_entrance: bool = False, vision_bg: Optional[str] = None) -> str:
+        """Get colored character for the Holy Grail"""
+        if is_entrance:
+            bg = Back.BLUE
+        elif vision_bg == 'knight':
+            bg = Back.YELLOW  # Darker yellow
+        elif vision_bg == 'goblin':
+            bg = Back.RED  # Darker red
+        else:
+            bg = ''
+        return bg + self._colorize('★', 'yellow', bright=True)
+    
+    def _get_entity_char(self, entity: Entity, in_storm: bool = False, 
+                        is_entrance: bool = False, vision_bg: Optional[str] = None) -> str:
+        """Get colored character for entity with facing arrow"""
+        # Facing arrows: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
+        arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
+        symbol = arrows[entity.facing]
         
-        # Color based on team and health
+        # Check if carrying grail - use special symbol (overrides facing arrow)
+        if hasattr(entity, 'carrying_grail') and entity.carrying_grail:
+            symbol = '⚔'  # Special symbol for grail carrier
+        
+        # Apply background: entrance > storm > vision > normal
+        if is_entrance:
+            bg = Back.BLUE
+        elif in_storm:
+            bg = Back.GREEN
+        elif vision_bg == 'knight':
+            bg = Back.YELLOW  # Darker yellow
+        elif vision_bg == 'goblin':
+            bg = Back.RED  # Darker red
+        else:
+            bg = ''
+        
+        # Color based on team
         if entity.team == Team.KNIGHT:
-            color = 'cyan'
-        else:  # Goblin
-            # Vary green shade based on health
-            hp_percent = entity.hp / entity.max_hp
-            if hp_percent > 0.7:
-                color = 'green'
-            elif hp_percent > 0.3:
-                color = 'yellow'
+            if hasattr(entity, 'carrying_grail') and entity.carrying_grail:
+                color = 'yellow'  # Gold for grail carrier
             else:
-                color = 'red'
+                color = 'white'  # Gray/white for knights (instead of cyan)
+        else:  # Goblin
+            color = 'green'  # Green for goblins
         
-        return self._colorize(symbol, color, bright=True)
+        return bg + self._colorize(symbol, color, bright=True)
     
     def _print_combat_log(self, combat_log: List[str]):
         """Print recent combat events"""

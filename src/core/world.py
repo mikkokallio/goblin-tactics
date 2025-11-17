@@ -4,7 +4,7 @@ World/Map management
 import numpy as np
 from typing import List, Tuple, Optional
 from src.generation.dungeon_gen import FLOOR, WALL, DIFFICULT
-from src.core.entity import Entity
+from src.core.entity import Entity, Team
 
 class World:
     """Manages the dungeon map and entity positions"""
@@ -15,6 +15,18 @@ class World:
         
         # Track entity positions for quick lookup
         self.entity_grid = {}  # (x, y) -> Entity
+        
+        # Holy Grail mechanics
+        self.grail_position: Optional[Tuple[int, int]] = None
+        self.grail_carrier: Optional[Entity] = None  # Which knight is carrying the grail
+        self.entrance_positions: List[Tuple[int, int]] = []  # Entrance corridor tiles
+        
+        # Shrinking zone mechanics (can be disabled)
+        self.storm_damage = 5  # Damage per turn outside safe zone
+        self.safe_zone_start_turn = 50  # Turn when zone starts shrinking
+        self.safe_zone_shrink_rate = 1  # Tiles per turn
+        self.safe_zone_radius = None  # Will be calculated
+        self.safe_zone_center = None  # Will be calculated
     
     def is_passable(self, x: int, y: int) -> bool:
         """Check if a tile is passable"""
@@ -118,6 +130,88 @@ class World:
                     adjacent.append(other)
         
         return adjacent
+    
+    def get_adjacent_allies(self, entity: Entity) -> List[Entity]:
+        """Get allied entities adjacent to this entity (convenience method for pack tactics)"""
+        return self.get_adjacent_entities(entity, allies_only=True)
+    
+    def initialize_safe_zone(self):
+        """Initialize the safe zone at map center"""
+        self.safe_zone_center = (self.width // 2, self.height // 2)
+        # Start with entire map being safe
+        self.safe_zone_radius = max(self.width, self.height)
+    
+    def update_safe_zone(self, turn: int):
+        """Update the safe zone radius based on current turn"""
+        if turn >= self.safe_zone_start_turn:
+            turns_since_start = turn - self.safe_zone_start_turn
+            self.safe_zone_radius = max(5, max(self.width, self.height) - 
+                                       turns_since_start * self.safe_zone_shrink_rate)
+    
+    def is_in_safe_zone(self, x: int, y: int) -> bool:
+        """Check if position is within the safe zone"""
+        if self.safe_zone_center is None or self.safe_zone_radius is None:
+            return True  # No zone active yet
+        
+        cx, cy = self.safe_zone_center
+        distance = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+        return distance <= self.safe_zone_radius
+    
+    def apply_storm_damage(self, entities: List[Entity], turn: int) -> List[dict]:
+        """Apply damage to entities outside safe zone"""
+        damage_events = []
+        
+        if turn < self.safe_zone_start_turn:
+            return damage_events
+        
+        for entity in entities:
+            if entity.alive and not self.is_in_safe_zone(entity.x, entity.y):
+                entity.take_damage(self.storm_damage)
+                damage_events.append({
+                    'entity_id': entity.id,
+                    'entity_type': entity.__class__.__name__,
+                    'damage': self.storm_damage,
+                    'killed': not entity.alive,
+                    'reason': 'storm'
+                })
+        
+        return damage_events
+    
+    def set_grail_position(self, position: Tuple[int, int]):
+        """Set the Holy Grail's position"""
+        self.grail_position = position
+    
+    def set_entrance_positions(self, positions: List[Tuple[int, int]]):
+        """Set the entrance corridor positions"""
+        self.entrance_positions = positions
+    
+    def is_grail_at_position(self, x: int, y: int) -> bool:
+        """Check if the grail is at this position"""
+        return self.grail_position == (x, y) and self.grail_carrier is None
+    
+    def is_entrance_position(self, x: int, y: int) -> bool:
+        """Check if this position is part of the entrance corridor"""
+        return (x, y) in self.entrance_positions
+    
+    def try_pickup_grail(self, entity: Entity) -> bool:
+        """
+        Try to pick up the grail if entity is standing on it.
+        Returns True if successful.
+        """
+        if (self.grail_position == entity.position and 
+            self.grail_carrier is None and
+            entity.team == Team.KNIGHT):  # Only knights can pick up grail
+            self.grail_carrier = entity
+            entity.carrying_grail = True
+            return True
+        return False
+    
+    def drop_grail(self, entity: Entity):
+        """Drop the grail at the entity's current position"""
+        if self.grail_carrier == entity:
+            self.grail_position = entity.position
+            self.grail_carrier = None
+            entity.carrying_grail = False
     
     def get_terrain_symbol(self, x: int, y: int) -> str:
         """Get the character to display for this terrain"""

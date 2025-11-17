@@ -39,6 +39,12 @@ class Entity:
         self.enemy_last_seen = {}  # enemy_id -> (x, y, turns_ago)
         self.turn_count = 0  # Track turns for staleness
         
+        # Grail carrying status
+        self.carrying_grail = False
+        
+        # Facing direction (0-7 for 8 directions: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW)
+        self.facing = random.randint(0, 7)
+        
     @property
     def position(self) -> Tuple[int, int]:
         """Get entity position as tuple"""
@@ -101,6 +107,87 @@ class Entity:
     def is_adjacent(self, other: 'Entity') -> bool:
         """Check if entity is adjacent (including diagonals)"""
         return abs(self.x - other.x) <= 1 and abs(self.y - other.y) <= 1
+    
+    def update_facing_from_movement(self, target_x: int, target_y: int):
+        """Update facing based on movement direction"""
+        dx = target_x - self.x
+        dy = target_y - self.y
+        
+        if dx == 0 and dy == 0:
+            return  # No movement
+        
+        # Map direction to facing (0-7)
+        # 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
+        if dy < 0:  # North
+            if dx > 0:
+                self.facing = 1  # NE
+            elif dx < 0:
+                self.facing = 7  # NW
+            else:
+                self.facing = 0  # N
+        elif dy > 0:  # South
+            if dx > 0:
+                self.facing = 3  # SE
+            elif dx < 0:
+                self.facing = 5  # SW
+            else:
+                self.facing = 4  # S
+        else:  # East/West
+            if dx > 0:
+                self.facing = 2  # E
+            else:
+                self.facing = 6  # W
+    
+    def update_facing_to_target(self, target: 'Entity'):
+        """Update facing to look at target entity"""
+        self.update_facing_from_movement(target.x, target.y)
+    
+    def get_attack_arc(self, attacker: 'Entity') -> str:
+        """
+        Determine which arc the attacker is in relative to this entity's facing.
+        Returns 'front', 'side', or 'rear'
+        
+        Front = 3 squares (facing, facing±1)
+        Sides = 2 squares each (facing±2)
+        Rear = 3 squares (facing±3, facing±4)
+        """
+        # Calculate direction from defender to attacker
+        dx = attacker.x - self.x
+        dy = attacker.y - self.y
+        
+        # Map to direction (0-7)
+        if dy < 0:  # North
+            if dx > 0:
+                attacker_dir = 1  # NE
+            elif dx < 0:
+                attacker_dir = 7  # NW
+            else:
+                attacker_dir = 0  # N
+        elif dy > 0:  # South
+            if dx > 0:
+                attacker_dir = 3  # SE
+            elif dx < 0:
+                attacker_dir = 5  # SW
+            else:
+                attacker_dir = 4  # S
+        else:  # East/West
+            if dx > 0:
+                attacker_dir = 2  # E
+            else:
+                attacker_dir = 6  # W
+        
+        # Calculate relative angle (0-7 scale)
+        relative_angle = (attacker_dir - self.facing) % 8
+        
+        # Front: 0, 1, 7 (±1 from facing)
+        if relative_angle in [0, 1, 7]:
+            return 'front'
+        # Rear: 3, 4, 5 (opposite side, ±1)
+        elif relative_angle in [3, 4, 5]:
+            return 'rear'
+        # Sides: 2, 6
+        else:
+            return 'side'
     
     def __repr__(self):
         return f"{self.__class__.__name__}(id={self.id}, pos=({self.x},{self.y}), hp={self.hp}/{self.max_hp})"

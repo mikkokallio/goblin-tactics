@@ -82,12 +82,21 @@ def find_path(world: World, start: Tuple[int, int], goal: Tuple[int, int],
             if valid_tiles is not None and neighbor_pos not in valid_tiles:
                 continue
             
-            # Skip if occupied (unless it's the goal)
-            if neighbor_pos != goal and world.is_occupied(*neighbor_pos):
-                continue
+            # Check if occupied
+            occupied_entity = world.get_entity_at(*neighbor_pos)
             
-            # Calculate cost (difficult terrain costs more)
+            # Calculate cost
             move_cost = 2.0 if world.is_difficult_terrain(*neighbor_pos) else 1.0
+            
+            # If occupied (and not the goal), add cost based on relationship
+            if occupied_entity and neighbor_pos != goal:
+                if entity and occupied_entity.team == entity.team:
+                    # Ally: high cost to discourage, but allow pathing through
+                    move_cost += 10.0
+                else:
+                    # Enemy: very high cost but still pathable (must fight through)
+                    move_cost += 20.0
+            
             tentative_g = current.g + move_cost
             
             if neighbor_pos in closed_set:

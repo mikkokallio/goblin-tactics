@@ -35,6 +35,12 @@ venv.bak/
 *.pt
 *.ckpt
 
+# Model checkpoints (JSON format)
+models/*.json
+models/*.pth
+models/*.pt
+!models/.gitkeep
+
 # Data files
 data/battles/*.json
 data/battles/*.csv
@@ -45,11 +51,6 @@ data/training/*.npz
 !data/.gitkeep
 !data/battles/.gitkeep
 !data/training/.gitkeep
-
-# Model checkpoints
-models/*.pth
-models/*.pt
-!models/.gitkeep
 
 # IDE
 .vscode/
